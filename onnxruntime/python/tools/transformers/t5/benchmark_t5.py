@@ -247,6 +247,34 @@ def main(args):
 
                     decoder_inputs = T5DecoderHelper.random_inputs(decoder, batch_size, sequence_length, past_sequence_length, device)
 
+                    # saving input to disk
+                    decoder_input_dir = os.path.join(output_dir, 'decoder_input_' + str(batch_size) + '_' + str(sequence_length) + '_' + str(past_sequence_length))
+                    if not os.path.exists(decoder_input_dir):
+                        try:
+                            os.mkdir(decoder_input_dir)
+                        except OSError:
+                            print("Creation of the directory %s failed" % dir)
+                        else:
+                            print("Successfully created the directory %s " % dir)
+
+                    if os.path.exists(decoder_input_dir):
+                        tensor_0 = onnx.numpy_helper.from_array(decoder_inputs.input_ids.cpu().numpy())
+                        with open(os.path.join(decoder_input_dir, 'input_0.pb'), 'wb') as f:
+                            f.write(tensor_0.SerializeToString())
+
+                        tensor_0 = onnx.numpy_helper.from_array(decoder_inputs.encoder_hidden_states.cpu().numpy())
+                        with open(os.path.join(decoder_input_dir, 'input_1.pb'), 'wb') as f:
+                            f.write(tensor_0.SerializeToString())
+
+                        if decoder_inputs.attention_mask:
+                            tensor_0 = onnx.numpy_helper.from_array(decoder_inputs.attention_mask.cpu().numpy())
+                            with open(os.path.join(decoder_input_dir, 'input_2.pb'), 'wb') as f:
+                                f.write(tensor_0.SerializeToString())
+                        if decoder_inputs.encoder_attention_mask:
+                            tensor_0 = onnx.numpy_helper.from_array(decoder_inputs.encoder_attention_mask.cpu().numpy())
+                            with open(os.path.join(decoder_input_dir, 'input_3.pb'), 'wb') as f:
+                                f.write(tensor_0.SerializeToString())
+
                     output_shapes = T5DecoderHelper.get_output_shapes(batch_size, sequence_length, past_sequence_length, config, args.use_past_state)
 
                     try:
