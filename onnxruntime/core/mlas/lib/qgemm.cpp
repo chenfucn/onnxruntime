@@ -2773,11 +2773,7 @@ Return Value:
 
     ptrdiff_t TargetThreadCount;
 
-    if (Complexity < double(MLAS_QGEMM_THREAD_COMPLEXITY * MlasPlatform.MaximumThreadCount)) {
         TargetThreadCount = ptrdiff_t(Complexity / double(MLAS_QGEMM_THREAD_COMPLEXITY)) + 1;
-    } else {
-        TargetThreadCount = MlasPlatform.MaximumThreadCount;
-    }
 
     ptrdiff_t MaximumThreadCount = MlasGetMaximumThreadCount(ThreadPool);
 

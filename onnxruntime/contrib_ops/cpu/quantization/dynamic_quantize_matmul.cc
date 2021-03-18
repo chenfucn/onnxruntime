@@ -138,6 +138,7 @@ Status DynamicQuantizeMatMul::Compute(OpKernelContext* ctx) const {
     b_zero_point = *static_cast<const uint8_t*>(b_zero_point_tensor->DataRaw());
   }
 
+  auto start_time = std::chrono::high_resolution_clock::now();
   // calculate quantization parameter of a
   const float* a_data = a->template Data<float>();
   int64_t num_of_elements = a->Shape().Size();
@@ -146,14 +147,17 @@ Status DynamicQuantizeMatMul::Compute(OpKernelContext* ctx) const {
   uint8_t a_zero_point;
   GetQuantizationParameter(a_data, num_of_elements, a_scale, a_zero_point);
 
+  auto end_minmax = std::chrono::high_resolution_clock::now();
+
   AllocatorPtr allocator;
   ORT_RETURN_IF_ERROR(ctx->GetTempSpaceAllocator(&allocator));
   uint8_t* a_data_quant = static_cast<uint8_t*>(allocator->Alloc(SafeInt<size_t>(num_of_elements) * sizeof(uint8_t)));
   BufferUniquePtr a_buffer_quant_holder(a_data_quant, BufferDeleter(allocator));
   // quantize the data
   MlasQuantizeLinear(a_data, a_data_quant, num_of_elements, a_scale, a_zero_point);
+  auto end_quant = std::chrono::high_resolution_clock::now();
 
-  return ComputeCommon(ctx,
+  auto status = ComputeCommon(ctx,
                        a_data_quant,
                        a->Shape(),
                        a_zero_point,
@@ -161,6 +165,22 @@ Status DynamicQuantizeMatMul::Compute(OpKernelContext* ctx) const {
                        b_zero_point,
                        a_scale * b_scale,
                        ctx->Input<Tensor>(IN_BIAS));
+
+  auto end = std::chrono::high_resolution_clock::now();
+  std::chrono::duration<double> minmax_dur = end_minmax - start_time;
+  std::chrono::duration<double> quant_dur = end_quant - end_minmax;
+  std::chrono::duration<double> matmul_dur = end - end_quant;
+  std::chrono::duration<double> dur = end - start_time;
+
+  const auto& logger = ctx->Logger();
+  LOGS(logger, VERBOSE) << "{ node : \"" << Node().Name() << "\", A : \""
+                        << a->Shape().ToString().c_str() << "\", B : \""
+                        << (b ? b->Shape() : b_shape_).ToString().c_str() << "\", b_signed: \""
+                        << (b ? b->IsDataType<int8_t>() : b_is_signed_)
+                        << "\", minmax: " << minmax_dur.count() << ", quant: " << quant_dur.count() << ", matmul: " << matmul_dur.count()
+                        << ", dur: " << dur.count()
+                        << "}";
+  return status;
 }
 
 Status MatMulIntegerToFloat::Compute(OpKernelContext* ctx) const {
