@@ -80,17 +80,6 @@ MlasGemmU8X8GetDispatch(
 }
 
 //
-// Define the parameters to execute segments of a QGEMM operation on worker
-// threads.
-//
-
-struct MLAS_GEMM_U8X8_WORK_BLOCK {
-    ptrdiff_t ThreadCountM;
-    ptrdiff_t ThreadCountN;
-    const MLAS_GEMM_U8X8_PARAMETERS* Parameters;
-};
-
-//
 // Define the default striding parameters used for the quantized integer
 // matrix/matrix multiply operation.
 //
@@ -2734,6 +2723,55 @@ Return Value:
     GemmU8X8Operation(Parameters, RangeStartM, RangeCountM, RangeStartN, RangeCountN);
 }
 
+
+void MlasGemmSegWork(size_t M, size_t N, size_t K,
+                     std::ptrdiff_t MaxThreadCount,
+                     std::ptrdiff_t& TargetThreadCount,
+                     std::ptrdiff_t& ThreadCountM,
+                     std::ptrdiff_t& ThreadCountN,
+                     double& CostInCycles) {
+  //
+  // Compute the number of target threads given the complexity of the SGEMM
+  // operation. Small requests should run using the single threaded path.
+  //
+
+  const double Complexity = double(M) * double(N) * double(K);
+
+    TargetThreadCount = std::ptrdiff_t(Complexity / double(MLAS_QGEMM_THREAD_COMPLEXITY)) + 1;
+
+  if (TargetThreadCount >= MaxThreadCount) {
+    TargetThreadCount = MaxThreadCount;
+  }
+
+  //
+  // Segment the operation across multiple threads.
+  //
+  // N.B. Currently, the operation is segmented as a 1D partition, which
+  // works okay for operations involving skinny matrices.
+  //
+  if (N > M) {
+    const size_t BlockedN = (N + MLAS_QGEMM_STRIDEN_THREAD_ALIGN - 1) /
+                            MLAS_QGEMM_STRIDEN_THREAD_ALIGN;
+
+    if (size_t(TargetThreadCount) > BlockedN) {
+      TargetThreadCount = std::ptrdiff_t(BlockedN);
+    }
+
+    ThreadCountM = 1;
+    ThreadCountN = TargetThreadCount;
+
+  } else {
+    if (size_t(TargetThreadCount) > M) {
+      TargetThreadCount = std::ptrdiff_t(M);
+    }
+
+    ThreadCountM = TargetThreadCount;
+    ThreadCountN = 1;
+  }
+  CostInCycles = Complexity / TargetThreadCount;
+}
+
+
 void
 MLASCALL
 MlasGemm(
@@ -2764,55 +2802,16 @@ Return Value:
     const size_t N = Parameters->N;
     const size_t K = Parameters->K;
 
-    //
-    // Compute the number of target threads given the complexity of the SGEMM
-    // operation. Small requests should run using the single threaded path.
-    //
-
-    const double Complexity = double(M) * double(N) * double(K);
-
-    ptrdiff_t TargetThreadCount;
-
-        TargetThreadCount = ptrdiff_t(Complexity / double(MLAS_QGEMM_THREAD_COMPLEXITY)) + 1;
-
-    ptrdiff_t MaximumThreadCount = MlasGetMaximumThreadCount(ThreadPool);
-
-    if (TargetThreadCount >= MaximumThreadCount) {
-        TargetThreadCount = MaximumThreadCount;
-    }
-
-    //
-    // Segment the operation across multiple threads.
-    //
-    // N.B. Currently, the operation is segmented as a 1D partition, which
-    // works okay for operations involving skinny matrices.
-    //
+    std::ptrdiff_t TargetThreadCount;
 
     MLAS_GEMM_U8X8_WORK_BLOCK WorkBlock;
 
     WorkBlock.Parameters = Parameters;
-
-    if (N > M) {
-
-        const size_t BlockedN = (N + MLAS_QGEMM_STRIDEN_THREAD_ALIGN - 1) /
-            MLAS_QGEMM_STRIDEN_THREAD_ALIGN;
-
-        if (size_t(TargetThreadCount) > BlockedN) {
-            TargetThreadCount = ptrdiff_t(BlockedN);
-        }
-
-        WorkBlock.ThreadCountM = 1;
-        WorkBlock.ThreadCountN = TargetThreadCount;
-
-    } else {
-
-        if (size_t(TargetThreadCount) > M) {
-            TargetThreadCount = ptrdiff_t(M);
-        }
-
-        WorkBlock.ThreadCountM = TargetThreadCount;
-        WorkBlock.ThreadCountN = 1;
-    }
+    
+    double cost;
+    // Compute the number of target threads
+    MlasGemmSegWork(M, N, K, MlasGetMaximumThreadCount(ThreadPool), TargetThreadCount,
+                    WorkBlock.ThreadCountM, WorkBlock.ThreadCountN, cost);
 
     MlasExecuteThreaded(MlasGemmU8X8Threaded, &WorkBlock, TargetThreadCount, ThreadPool);
 }

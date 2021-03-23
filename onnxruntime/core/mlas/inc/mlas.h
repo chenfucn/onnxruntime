@@ -288,6 +288,42 @@ struct MLAS_GEMM_U8X8_PARAMETERS {
     const MLAS_QGEMM_OUTPUT_PROCESSOR* OutputProcessor = nullptr;
 };
 
+//
+// Define the parameters to execute segments of a QGEMM operation on worker
+// threads.
+//
+
+struct MLAS_GEMM_U8X8_WORK_BLOCK {
+  ptrdiff_t ThreadCountM;
+  ptrdiff_t ThreadCountN;
+  const MLAS_GEMM_U8X8_PARAMETERS* Parameters;
+};
+
+
+/**
+ * @brief Segment the work of multiplying [M,K], [K,N] matrix for parallel
+ *        processing
+ * @param [IN]  M 
+ * @param [IN]  N 
+ * @param [IN]  K 
+ * @param [IN]  MaxThreadCount 
+ * @param [OUT] TargetThreadCount  Total number of segments to run in parallel
+ * @param [OUT] ThreadCountM       Work partition horizontally
+ * @param [OUT] ThreadCountN       Work partition vertically
+ * @param [OUT] CostInCycles       Estimated execution cost for each segment
+*/
+void MlasGemmSegWork(size_t M, size_t N, size_t K,
+                     ptrdiff_t MaxThreadCount,
+                     ptrdiff_t& TargetThreadCount,
+                     ptrdiff_t& ThreadCountM,
+                     ptrdiff_t& ThreadCountN,
+                     double&  CostInCycles
+    );
+
+void MlasGemmU8X8Threaded(
+    void* Context,
+    ptrdiff_t ThreadId);
+
 void
 MLASCALL
 MlasGemm(
