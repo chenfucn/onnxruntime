@@ -7,6 +7,7 @@
 #include "core/util/math_cpuonly.h"
 #include "core/util/qmath.h"
 
+#include "windows.h"
 #include <algorithm>
 
 namespace onnxruntime {
@@ -48,7 +49,8 @@ protected:
                        const Tensor* b,
                        uint8_t b_zero_point,
                        float multiplier,
-                       const Tensor* bias_tensor) const;
+                       const Tensor* bias_tensor,
+                       std::atomic<uint32_t>* core_dbg = nullptr) const;
 };
 
 Status MatMulIntegerToFloatBase::ComputeCommon(OpKernelContext* ctx,
@@ -58,7 +60,8 @@ Status MatMulIntegerToFloatBase::ComputeCommon(OpKernelContext* ctx,
                                                const Tensor* b,
                                                uint8_t b_zero_point,
                                                float multiplier,
-                                               const Tensor* bias_tensor) const {
+                                               const Tensor* bias_tensor,
+                                               std::atomic<uint32_t>* core_dbg) const {
   MatMulComputeHelper helper;
   ORT_RETURN_IF_ERROR(helper.Compute(a_shape, packed_b_ ? b_shape_ : b->Shape()));
   Tensor* y = ctx->Output(OUT_Y, helper.OutputShape());
@@ -74,47 +77,16 @@ Status MatMulIntegerToFloatBase::ComputeCommon(OpKernelContext* ctx,
   size_t N = static_cast<size_t>(helper.N());
   size_t K = static_cast<size_t>(helper.K());
   const int num_gemms = static_cast<int>(helper.OutputOffsets().size());
-  if (num_gemms == 1) {
-    MLAS_GEMM_U8X8_PARAMETERS gemm_params;
-    gemm_params.M = M;
-    gemm_params.N = N;
-    gemm_params.K = K;
-    gemm_params.lda = gemm_params.K;
-    gemm_params.ZeroPointA = a_zero_point;
-    gemm_params.ldb = gemm_params.N;
-    gemm_params.ZeroPointB = &b_zero_point;
-    gemm_params.ldc = gemm_params.N;
-    MLAS_QGEMM_SCALE_BIAS_OUTPUT_PROCESSOR scale_bias_processor(
-        y_data,
-        N,
-        &multiplier,
-        bias_data);
-
-    gemm_params.A = a_data;
-    if (packed_b_) {
-      gemm_params.B = packed_b_.get();
-      gemm_params.BIsPacked = true;
-      gemm_params.BIsSigned = b_is_signed_;
-    } else {
-      gemm_params.B = static_cast<const uint8_t*>(b->DataRaw());
-      gemm_params.BIsSigned = b->IsDataType<int8_t>();
-    }
-    gemm_params.C = reinterpret_cast<int32_t*>(y_data);
-    gemm_params.OutputProcessor = &scale_bias_processor;
-    MlasGemm(&gemm_params, ctx->GetOperatorThreadPool());
-    return Status::OK();
-  }
 
   // Segment the work for parallelization. This is a two dimentional work partition.
   // The idea is to generate a group of not-too-small work chunks and let the thread
   // pool load balance them
   // TODO!! maybe just delegate this entirely to the threadpool?
-  const std::ptrdiff_t num_work_blks_hint = concurrency::ThreadPool::DegreeOfParallelism(ctx->GetOperatorThreadPool()) * std::ptrdiff_t(4);
-  std::ptrdiff_t num_blks_per_gemm = (num_work_blks_hint + num_gemms - 1) / num_gemms;
+  std::ptrdiff_t num_blks_per_gemm;
   std::ptrdiff_t thread_m;
   std::ptrdiff_t thread_n;
   double cost;
-  MlasGemmSegWork(M, N, K, num_blks_per_gemm, num_blks_per_gemm, thread_m, thread_n, cost);
+  MlasGemmSegWork(M, N, K, num_blks_per_gemm, thread_m, thread_n, cost);
 
   // setup parameters for each gemm so that we can run them in parallel
   std::vector<GemmWorkContext> gemm_context;
@@ -157,6 +129,9 @@ Status MatMulIntegerToFloatBase::ComputeCommon(OpKernelContext* ctx,
           const auto blk_i = idx % num_blks_per_gemm;
           // TODO!! coalescing consequtive iterations in the same call
           MlasGemmU8X8Threaded(&(gemm_context[gemm_i].work_block_), blk_i);
+        }
+        if (core_dbg != nullptr) {
+          core_dbg[GetCurrentProcessorNumber()]++;
         }
       });
 
@@ -217,6 +192,7 @@ Status DynamicQuantizeMatMul::Compute(OpKernelContext* ctx) const {
                 "DynamicQuantizeMatMul : input B zero point must be a scalar or 1D tensor of size 1. Per-Channel is not supported yet.");
     b_zero_point = *static_cast<const uint8_t*>(b_zero_point_tensor->DataRaw());
   }
+  std::atomic<uint32_t> __core_dbg[64] = {0};
 
   auto start_time = std::chrono::high_resolution_clock::now();
   // calculate quantization parameter of a
@@ -245,7 +221,7 @@ Status DynamicQuantizeMatMul::Compute(OpKernelContext* ctx) const {
                        b,
                        b_zero_point,
                        a_scale * b_scale,
-                       ctx->Input<Tensor>(IN_BIAS));
+                       ctx->Input<Tensor>(IN_BIAS), __core_dbg);
 
   auto end = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double> minmax_dur = end_minmax - start_time;
@@ -253,14 +229,18 @@ Status DynamicQuantizeMatMul::Compute(OpKernelContext* ctx) const {
   std::chrono::duration<double> matmul_dur = end - end_quant;
   std::chrono::duration<double> dur = end - start_time;
 
+  size_t core_count = 0;
+  for (const auto& c : __core_dbg) {
+    if (c.load() > 0) core_count++;
+  }
   const auto& logger = ctx->Logger();
   LOGS(logger, VERBOSE) << "{ node : \"" << Node().Name() << "\", A : \""
                         << a->Shape().ToString().c_str() << "\", B : \""
                         << (b ? b->Shape() : b_shape_).ToString().c_str() << "\", b_signed: \""
                         << (b ? b->IsDataType<int8_t>() : b_is_signed_)
                         << "\", minmax: " << minmax_dur.count() << ", quant: " << quant_dur.count() << ", matmul: " << matmul_dur.count()
-                        << ", dur: " << dur.count()
-                        << "}";
+                        << ", dur: " << dur.count() << ", cores: " << core_count
+                        << "  }";
   return status;
 }
 

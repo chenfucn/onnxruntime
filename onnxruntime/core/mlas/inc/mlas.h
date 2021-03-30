@@ -306,14 +306,12 @@ struct MLAS_GEMM_U8X8_WORK_BLOCK {
  * @param [IN]  M 
  * @param [IN]  N 
  * @param [IN]  K 
- * @param [IN]  MaxThreadCount 
  * @param [OUT] TargetThreadCount  Total number of segments to run in parallel
  * @param [OUT] ThreadCountM       Work partition horizontally
  * @param [OUT] ThreadCountN       Work partition vertically
  * @param [OUT] CostInCycles       Estimated execution cost for each segment
 */
 void MlasGemmSegWork(size_t M, size_t N, size_t K,
-                     ptrdiff_t MaxThreadCount,
                      ptrdiff_t& TargetThreadCount,
                      ptrdiff_t& ThreadCountM,
                      ptrdiff_t& ThreadCountN,

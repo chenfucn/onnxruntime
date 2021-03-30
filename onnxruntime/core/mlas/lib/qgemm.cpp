@@ -2723,52 +2723,40 @@ Return Value:
     GemmU8X8Operation(Parameters, RangeStartM, RangeCountM, RangeStartN, RangeCountN);
 }
 
+// TODO USE KERNEL TYPE STRIDES
+#define COMM_STRIDE_M 48
+#define COMM_STRIDE_N 256
+inline void segMN(size_t M, size_t N, size_t& blockM, size_t& blockN) {
+  blockN = N < COMM_STRIDE_N ? 1 : N / COMM_STRIDE_N;
+  blockM = M < COMM_STRIDE_M ? 1 : M / COMM_STRIDE_M;
+}
 
 void MlasGemmSegWork(size_t M, size_t N, size_t K,
-                     std::ptrdiff_t MaxThreadCount,
                      std::ptrdiff_t& TargetThreadCount,
                      std::ptrdiff_t& ThreadCountM,
                      std::ptrdiff_t& ThreadCountN,
                      double& CostInCycles) {
-  //
-  // Compute the number of target threads given the complexity of the SGEMM
-  // operation. Small requests should run using the single threaded path.
-  //
+  size_t blockM;
+  size_t blockN;
+  segMN(M, N, blockM, blockN);
 
-  const double Complexity = double(M) * double(N) * double(K);
-
-    TargetThreadCount = std::ptrdiff_t(Complexity / double(MLAS_QGEMM_THREAD_COMPLEXITY)) + 1;
-
-  if (TargetThreadCount >= MaxThreadCount) {
-    TargetThreadCount = MaxThreadCount;
-  }
-
-  //
-  // Segment the operation across multiple threads.
   //
   // N.B. Currently, the operation is segmented as a 1D partition, which
   // works okay for operations involving skinny matrices.
   //
-  if (N > M) {
-    const size_t BlockedN = (N + MLAS_QGEMM_STRIDEN_THREAD_ALIGN - 1) /
-                            MLAS_QGEMM_STRIDEN_THREAD_ALIGN;
-
-    if (size_t(TargetThreadCount) > BlockedN) {
-      TargetThreadCount = std::ptrdiff_t(BlockedN);
-    }
+  if (blockN > blockM) {
+    TargetThreadCount = blockN;
 
     ThreadCountM = 1;
     ThreadCountN = TargetThreadCount;
 
   } else {
-    if (size_t(TargetThreadCount) > M) {
-      TargetThreadCount = std::ptrdiff_t(M);
-    }
 
+    TargetThreadCount = blockM;
     ThreadCountM = TargetThreadCount;
     ThreadCountN = 1;
   }
-  CostInCycles = Complexity / TargetThreadCount;
+  CostInCycles = double(M) * double(N) * double(K) / TargetThreadCount;
 }
 
 
@@ -2810,7 +2798,7 @@ Return Value:
     
     double cost;
     // Compute the number of target threads
-    MlasGemmSegWork(M, N, K, MlasGetMaximumThreadCount(ThreadPool), TargetThreadCount,
+    MlasGemmSegWork(M, N, K, TargetThreadCount,
                     WorkBlock.ThreadCountM, WorkBlock.ThreadCountN, cost);
 
     MlasExecuteThreaded(MlasGemmU8X8Threaded, &WorkBlock, TargetThreadCount, ThreadPool);
