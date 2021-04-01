@@ -270,33 +270,29 @@ private:
     MLAS_QUANTIZATION_GRANULARITY QuantGran_;
 };
 
+
+/**
+  * Parameters for low precision matrix multiplication
+  * C(M,N) = A(M,K) X B(K,N)
+  * This interface supports batch multiplication of uniformly
+  * shaped and typed matrix pairs
+  */
 struct MLAS_GEMM_U8X8_PARAMETERS {
-    size_t M = 0;
-    size_t N = 0;
-    size_t K = 0;
-    const uint8_t* A = nullptr;
-    size_t lda = 0;
-    uint8_t ZeroPointA = 0;
-    const void* B = 0;
-    size_t ldb = 0;
-    const uint8_t* ZeroPointB = nullptr;
-    bool BIsPacked = false;
-    bool BIsSigned = false;
-    bool PerColumnZeroPoints = false;
-    int32_t* C = nullptr;
-    size_t ldc = 0;
-    const MLAS_QGEMM_OUTPUT_PROCESSOR* OutputProcessor = nullptr;
-};
-
-//
-// Define the parameters to execute segments of a QGEMM operation on worker
-// threads.
-//
-
-struct MLAS_GEMM_U8X8_WORK_BLOCK {
-  ptrdiff_t ThreadCountM;
-  ptrdiff_t ThreadCountN;
-  const MLAS_GEMM_U8X8_PARAMETERS* Parameters;
+  size_t M = 0;
+  size_t N = 0;
+  size_t K = 0;
+  const uint8_t* A = nullptr;
+  size_t lda = 0;
+  uint8_t ZeroPointA = 0;
+  const void* B = 0;
+  size_t ldb = 0;
+  const uint8_t* ZeroPointB = nullptr;
+  bool BIsPacked = false;
+  bool BIsSigned = false;
+  bool PerColumnZeroPoints = false;
+  int32_t* C = nullptr;
+  size_t ldc = 0;
+  const MLAS_QGEMM_OUTPUT_PROCESSOR* OutputProcessor = nullptr;
 };
 
 
@@ -306,20 +302,15 @@ struct MLAS_GEMM_U8X8_WORK_BLOCK {
  * @param [IN]  M 
  * @param [IN]  N 
  * @param [IN]  K 
+ * @param [IN}  BIsSigned          Whether B matrix is int_8
  * @param [OUT] TargetThreadCount  Total number of segments to run in parallel
- * @param [OUT] ThreadCountM       Work partition horizontally
- * @param [OUT] ThreadCountN       Work partition vertically
  * @param [OUT] CostInCycles       Estimated execution cost for each segment
 */
-void MlasGemmSegWork(size_t M, size_t N, size_t K,
-                     ptrdiff_t& TargetThreadCount,
-                     ptrdiff_t& ThreadCountM,
-                     ptrdiff_t& ThreadCountN,
-                     double&  CostInCycles
-    );
+void MlasGemmSegWork(size_t M, size_t N, size_t K, bool BIsSigned,
+                     ptrdiff_t& TargetThreadCount, double& CostInCycles);
 
 void MlasGemmU8X8Threaded(
-    void* Context,
+    const void* Context,
     ptrdiff_t ThreadId);
 
 void

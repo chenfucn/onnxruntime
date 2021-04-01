@@ -13,27 +13,6 @@
 namespace onnxruntime {
 namespace contrib {
 
-/**
- * @brief Data structure for computing each Gemm in a thread
-*/
-struct GemmWorkContext {
- public:
-  GemmWorkContext(float* Output,
-                  size_t LeadingDimensionOutput,
-                  const float* Scale,
-                  const float* Bias,
-                  MLAS_QGEMM_OUTPUT_MODE Mode = MLAS_QGEMM_OUTPUT_MODE::ZeroMode,
-                  MLAS_QUANTIZATION_GRANULARITY QuantGran = MLAS_QUANTIZATION_GRANULARITY::PerMatrix) : scale_bias_processor_(Output, LeadingDimensionOutput, Scale, Bias, Mode, QuantGran)
-  {
-    work_block_.Parameters = &params_;
-    params_.OutputProcessor = &scale_bias_processor_;
-  }
-
-  MLAS_QGEMM_SCALE_BIAS_OUTPUT_PROCESSOR scale_bias_processor_;
-  MLAS_GEMM_U8X8_PARAMETERS params_;
-  MLAS_GEMM_U8X8_WORK_BLOCK work_block_;
-};
-
 class MatMulIntegerToFloatBase : public MatMulIntegerBase {
  public:
   MatMulIntegerToFloatBase(const OpKernelInfo& info) : MatMulIntegerBase(info) {
@@ -77,48 +56,46 @@ Status MatMulIntegerToFloatBase::ComputeCommon(OpKernelContext* ctx,
   size_t N = static_cast<size_t>(helper.N());
   size_t K = static_cast<size_t>(helper.K());
   const int num_gemms = static_cast<int>(helper.OutputOffsets().size());
+  const bool b_is_signed = packed_b_ ? b_is_signed_ : b->IsDataType<int8_t>();
 
   // Segment the work for parallelization. This is a two dimentional work partition.
   // The idea is to generate a group of not-too-small work chunks and let the thread
   // pool load balance them
   // TODO!! maybe just delegate this entirely to the threadpool?
   std::ptrdiff_t num_blks_per_gemm;
-  std::ptrdiff_t thread_m;
-  std::ptrdiff_t thread_n;
   double cost;
-  MlasGemmSegWork(M, N, K, num_blks_per_gemm, thread_m, thread_n, cost);
+  MlasGemmSegWork(M, N, K, b_is_signed, num_blks_per_gemm, cost);
 
   // setup parameters for each gemm so that we can run them in parallel
-  std::vector<GemmWorkContext> gemm_context;
-  gemm_context.reserve(num_gemms);
+  std::vector<MLAS_GEMM_U8X8_PARAMETERS> gemm_params;
+  gemm_params.resize(num_gemms);
+  std::vector<MLAS_QGEMM_SCALE_BIAS_OUTPUT_PROCESSOR> gemm_scale_procs;
+  gemm_scale_procs.reserve(num_gemms);
+
   for (size_t gemm_idx = 0; gemm_idx < num_gemms; gemm_idx++) {
-    gemm_context.emplace_back(y_data + helper.OutputOffsets()[gemm_idx],
+    gemm_scale_procs.emplace_back(y_data + helper.OutputOffsets()[gemm_idx],
                               N,
                               &multiplier,
                               bias_data);
+    gemm_params[gemm_idx].M = M;
+    gemm_params[gemm_idx].N = N;
+    gemm_params[gemm_idx].K = K;
+    gemm_params[gemm_idx].BIsSigned = b_is_signed;
+    gemm_params[gemm_idx].BIsPacked = bool(packed_b_);
+    gemm_params[gemm_idx].OutputProcessor = &gemm_scale_procs[gemm_idx];
 
-    auto& gemm_params = gemm_context[gemm_idx].params_;
-    gemm_params.M = M;
-    gemm_params.N = N;
-    gemm_params.K = K;
-    gemm_params.lda = gemm_params.K;
-    gemm_params.ZeroPointA = a_zero_point;
-    gemm_params.ldb = gemm_params.N;
-    gemm_params.ZeroPointB = &b_zero_point;
-    gemm_params.ldc = gemm_params.N;
-    gemm_params.A = a_data + helper.LeftOffsets()[gemm_idx];
-    if (packed_b_) {
-      gemm_params.B = packed_b_.get();
-      gemm_params.BIsPacked = true;
-      gemm_params.BIsSigned = b_is_signed_;
+    gemm_params[gemm_idx].lda = K;
+    gemm_params[gemm_idx].ZeroPointA = a_zero_point;
+    gemm_params[gemm_idx].ldb = N;
+    gemm_params[gemm_idx].ZeroPointB = &b_zero_point;
+    gemm_params[gemm_idx].ldc = N;
+    gemm_params[gemm_idx].A = a_data + helper.LeftOffsets()[gemm_idx];
+    if (gemm_params[gemm_idx].BIsPacked) {
+      gemm_params[gemm_idx].B = packed_b_.get();
     } else {
-      gemm_params.B = static_cast<const uint8_t*>(b->DataRaw()) + +helper.RightOffsets()[gemm_idx];
-      gemm_params.BIsSigned = b->IsDataType<int8_t>();
+      gemm_params[gemm_idx].B = static_cast<const uint8_t*>(b->DataRaw()) + +helper.RightOffsets()[gemm_idx];
     }
-    gemm_params.C = reinterpret_cast<int32_t*>(y_data) + helper.OutputOffsets()[gemm_idx];
-
-    gemm_context[gemm_idx].work_block_.ThreadCountM = thread_m;
-    gemm_context[gemm_idx].work_block_.ThreadCountN = thread_n;
+    gemm_params[gemm_idx].C = reinterpret_cast<int32_t*>(y_data) + helper.OutputOffsets()[gemm_idx];
   }
 
   concurrency::ThreadPool::TryParallelFor(
@@ -128,7 +105,7 @@ Status MatMulIntegerToFloatBase::ComputeCommon(OpKernelContext* ctx,
           const auto gemm_i = idx / num_blks_per_gemm;
           const auto blk_i = idx % num_blks_per_gemm;
           // TODO!! coalescing consequtive iterations in the same call
-          MlasGemmU8X8Threaded(&(gemm_context[gemm_i].work_block_), blk_i);
+          MlasGemmU8X8Threaded(&(gemm_params[gemm_i]), blk_i);
         }
         if (core_dbg != nullptr) {
           core_dbg[GetCurrentProcessorNumber()]++;
