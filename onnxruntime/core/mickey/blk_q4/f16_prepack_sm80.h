@@ -19,10 +19,47 @@
 #pragma once
 
 #include "core/common/common.h"
+#include "core/framework/float16.h"
+#include "core/providers/cuda/shared_inc/cuda_utils.h"
 #include "core/util/matrix_layout.h"
 
 namespace onnxruntime {
 namespace cuda {
+
+namespace details {
+
+static inline bool IsSm80WithWholeBlocks(int weight_rows, int weight_cols, cudaDeviceProp const& prop) {
+  if (prop.major < 8) {
+    return false;
+  }
+  return (weight_rows % 64 == 0) && (weight_cols % 64 == 0);
+}
+
+}  // namespace details
+
+template<typename ElementT, int block_size, int qbits>
+inline
+bool BlkQuantGemmSm80Supported(int weight_rows, int weight_cols, cudaDeviceProp const& prop) {
+  return false;
+}
+
+template<>
+inline
+bool BlkQuantGemmSm80Supported<MLFloat16, 16, 4>(int weight_rows, int weight_cols, cudaDeviceProp const& prop) {
+  return details::IsSm80WithWholeBlocks(weight_rows, weight_cols, prop);
+}
+
+template<>
+inline
+bool BlkQuantGemmSm80Supported<MLFloat16, 32, 4>(int weight_rows, int weight_cols, cudaDeviceProp const& prop) {
+  return details::IsSm80WithWholeBlocks(weight_rows, weight_cols, prop);
+}
+
+template<>
+inline
+bool BlkQuantGemmSm80Supported<MLFloat16, 64, 4>(int weight_rows, int weight_cols, cudaDeviceProp const& prop) {
+  return details::IsSm80WithWholeBlocks(weight_rows, weight_cols, prop);
+}
 
 /**
  * @brief Blockwise quantization methods
