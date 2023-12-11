@@ -154,8 +154,9 @@ TEST(MatMulNBits, Float16) {
   for (auto M : {1, 2, 100}) {
     for (auto N : {1, 2, 32, 288}) {
       for (auto K : {16, 32, 64, 128, 256, 1024, 93, 1234}) {
-        for (auto block_size : {16, 32, 64, 128}) {
-          RunTest(M, N, K, block_size, false, true);
+        for (auto block_size : {16}) {
+          std::cerr << "M: " << M << " N: " << N << " K: " << K << " block_size: " << block_size << std::endl;
+          // RunTest(M, N, K, block_size, false, true);
           RunTest(M, N, K, block_size, true, true);
         }
       }

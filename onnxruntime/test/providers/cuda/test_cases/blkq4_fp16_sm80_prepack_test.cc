@@ -117,11 +117,11 @@ void prepack_quant_scales_ref(
 
 template <typename Layout, typename QuantBlocking>
 void prepack_quant_offsets_ref(
-    size_t rows,
-    size_t columns,
+    int rows,
+    int columns,
     MatrixRef<uint8_t const, Layout, true> tensor_offset,
     MatrixRef<uint8_t, Layout, true> tensor_offset_prepacked) {
-  // EXPECT_TRUE(tensor_offset.shape()[0] == (rows / QuantBlocking::kRow) && tensor_offset.shape()[1] == (columns / QuantBlocking::kColumn));
+  EXPECT_TRUE(tensor_offset.shape()[0] == (rows / QuantBlocking::kRow) && tensor_offset.shape()[1] == (columns / QuantBlocking::kColumn));
   EXPECT_TRUE(tensor_offset_prepacked.shape() == tensor_offset.shape());
 
   // Only prepacking scale and offset tensors for a often used special case:
