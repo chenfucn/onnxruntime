@@ -192,7 +192,7 @@ class MatMulNBits<MLFloat16> final : public CudaKernel {
 
   template<int BlkSize, bool ColumnWiseQuantBlk>
   void SetPrepackFields(const cudaDeviceProp& device_prop){
-    bool should_prepack = onnxruntime::cuda::BlkQuantGemmSm80Supported<MLFloat16, BlkSize, 4>(K_, N_, device_prop);
+    bool should_prepack = onnxruntime::cuda::BlkQuantGemmSm80Supported<MLFloat16, BlkSize, 4>(K_, N_, device_prop.major, device_prop.minor);
     packed_b_shape_ = BlockwiseQuantization<MLFloat16, BlkSize, 4, ColumnWiseQuantBlk>::get_quant_weights_shape(K_, N_);
     packed_meta_shape_ = BlockwiseQuantization<MLFloat16, BlkSize, 4, ColumnWiseQuantBlk>::get_quant_meta_shape(K_, N_);
     if (should_prepack) {

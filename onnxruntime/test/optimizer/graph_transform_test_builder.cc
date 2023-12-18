@@ -9,6 +9,7 @@
 
 #include "core/graph/model.h"
 #include "core/session/inference_session.h"
+#include "core/providers/cuda/cuda_provider_factory_creator.h"
 #include "test/compare_ortvalue.h"
 #include "test/test_environment.h"
 #include "test/util/include/asserts.h"
@@ -81,6 +82,13 @@ void TransformerTester(const std::function<void(ModelTestBuilder& helper)>& buil
       add_session_options(session_options);
     }
     InferenceSessionWrapper session{session_options, GetEnvironment()};
+
+    OrtCUDAProviderOptions cuda_options;
+    auto factory = onnxruntime::CudaProviderFactoryCreator::Create(&cuda_options);
+    ASSERT_TRUE(factory) << "Failed to load shared library and create CUDA Execution Provider Factory";
+    auto provider = factory->CreateProvider();
+    ASSERT_STATUS_OK(session.RegisterExecutionProvider(std::move(provider)));
+
     ASSERT_STATUS_OK(session.Load(model_data.data(), static_cast<int>(model_data.size())));
     if (transformer) {
       ASSERT_STATUS_OK(session.RegisterGraphTransformer(std::move(transformer), level));
