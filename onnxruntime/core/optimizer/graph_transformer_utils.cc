@@ -43,7 +43,6 @@
 #include "core/optimizer/gemm_activation_fusion.h"
 #include "core/optimizer/gemm_sum_fusion.h"
 #include "core/optimizer/gemm_transpose_fusion.h"
-#include "core/optimizer/gpu_ops_prepack.h"
 #include "core/optimizer/identical_children_consolidation.h"
 #include "core/optimizer/identity_elimination.h"
 #include "core/optimizer/layer_norm_fusion.h"
@@ -380,13 +379,14 @@ InlinedVector<std::unique_ptr<GraphTransformer>> GenerateTransformers(
       // while we can fuse more activation.
       transformers.emplace_back(std::make_unique<ConvAddActivationFusion>(cpu_ep));
 
-#ifdef USE_CUDA
       // Cuda weight prepacking.
       auto* cuda_ep = execution_providers.Get(onnxruntime::kCudaExecutionProvider);
       if (cuda_ep != nullptr) {
-        transformers.emplace_back(std::make_unique<GpuOpsPrepack>());
+        auto cuda_optimizers = cuda_ep->GetTransformers();
+        for (auto& cuda_optimizer : cuda_optimizers) {
+          transformers.emplace_back(std::unique_ptr<GraphTransformer>(cuda_optimizer));
+        }
       }
-#endif
 #endif
 
     } break;

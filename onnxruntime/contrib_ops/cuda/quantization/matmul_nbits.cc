@@ -192,7 +192,7 @@ class MatMulNBits<MLFloat16> final : public CudaKernel {
 
   template<int BlkSize, bool ColumnWiseQuantBlk>
   void SetPrepackFields(const cudaDeviceProp& device_prop){
-    bool should_prepack = onnxruntime::cuda::BlkQuantGemmSm80Supported<MLFloat16, BlkSize, 4>(K_, N_, device_prop.major, device_prop.minor);
+    bool should_prepack = onnxruntime::cuda::BlkQuantGemmSm80Supported<MLFloat16, BlkSize, 4>(K_, N_, device_prop);
     packed_b_shape_ = BlockwiseQuantization<MLFloat16, BlkSize, 4, ColumnWiseQuantBlk>::get_quant_weights_shape(K_, N_);
     packed_meta_shape_ = BlockwiseQuantization<MLFloat16, BlkSize, 4, ColumnWiseQuantBlk>::get_quant_meta_shape(K_, N_);
     if (should_prepack) {
@@ -528,6 +528,52 @@ ONNX_OPERATOR_TYPED_KERNEL_EX(
         .TypeConstraint("T1", DataTypeImpl::GetTensorType<MLFloat16>())
         .TypeConstraint("T2", DataTypeImpl::GetTensorType<uint8_t>()),
     MatMulNBits<MLFloat16>);
+
+
+/**
+ *@brief Check if the operator is a MatMulNBits<float16> and it can be prepacked.
+ */
+bool should_pack_matmul_nbits(const Node& node, const CUDAExecutionProvider& cuda_ep) {
+
+  //
+  // If we want to expand this prepacking logic to other operators, we need a lookup
+  // mechanism to find:
+  // 1. whether the operator supports prepacking.
+  // 2. the operator specific prepacking logic.
+  //
+  if (node.OpType() != "MatMulNBits" || node.Domain() != kMSDomain || node.SinceVersion() != 1) {
+    return false;
+  }
+
+  const auto* acts = node.InputDefs()[0];
+
+  if (acts == nullptr || acts->Type() == nullptr || acts->Type()->find("float16") == std::string::npos) {
+    return false;
+  }
+
+  int k = node.GetAttributes().at("K").i();
+  int n = node.GetAttributes().at("N").i();
+  int block_size = node.GetAttributes().at("block_size").i();
+  int nbits = node.GetAttributes().at("bits").i();
+
+  if (nbits != 4) {
+    return false;
+  }
+
+  const cudaDeviceProp& prop = cuda_ep.GetDeviceProp();
+
+  switch (block_size)
+  {
+  case 16:
+    return onnxruntime::cuda::BlkQuantGemmSm80Supported<MLFloat16, 16, 4>(k, n, prop);
+  case 32:
+    return onnxruntime::cuda::BlkQuantGemmSm80Supported<MLFloat16, 32, 4>(k, n, prop);
+  case 64:
+    return onnxruntime::cuda::BlkQuantGemmSm80Supported<MLFloat16, 64, 4>(k, n, prop);
+  }
+  return false;
+}
+
 
 }  // namespace cuda
 }  // namespace contrib

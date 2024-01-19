@@ -27,6 +27,8 @@ class CUDAExecutionProvider : public IExecutionProvider {
   explicit CUDAExecutionProvider(const CUDAExecutionProviderInfo& info);
   virtual ~CUDAExecutionProvider();
 
+  InlinedVector<GraphTransformer*> GetTransformers() const override;
+
   Status Sync() const override;
 
   Status OnRunStart() override;

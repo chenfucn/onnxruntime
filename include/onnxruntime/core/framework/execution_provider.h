@@ -35,6 +35,11 @@ class Node;
 
 namespace onnxruntime {
 
+// Forward declarations
+// from "core/optimizer/graph_transformer.h", but the header includes core common logging declarations
+// that conflict with the logging declarations in core/providers/shared_library/provider_api.h
+class GraphTransformer;
+
 /**
    Logical device representation.
 */
@@ -156,6 +161,11 @@ class IExecutionProvider {
      a role to help pass ONNX model validation.
    */
   virtual void GetCustomOpDomainList(std::vector<OrtCustomOpDomain*>& /*provider custom op domain list*/) const {};
+
+  virtual InlinedVector<GraphTransformer*> GetTransformers() const {
+    InlinedVector<GraphTransformer*> transformers;
+    return transformers;
+  }
 
   /**
      Returns an opaque handle whose exact type varies based on the provider

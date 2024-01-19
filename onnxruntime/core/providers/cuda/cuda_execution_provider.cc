@@ -300,6 +300,14 @@ CUDAExecutionProvider::~CUDAExecutionProvider() {
   }
 }
 
+extern GraphTransformer* CreateGpuOpsPrepack(const CUDAExecutionProvider& cuda_ep);
+
+InlinedVector<GraphTransformer*> CUDAExecutionProvider::GetTransformers() const {
+  InlinedVector<GraphTransformer*> transformers;
+  transformers.emplace_back(CreateGpuOpsPrepack(*this));
+  return transformers;
+}
+
 ITuningContext* CUDAExecutionProvider::GetTuningContext() const {
   return const_cast<cuda::tunable::CudaTuningContext*>(&tuning_context_);
 }
